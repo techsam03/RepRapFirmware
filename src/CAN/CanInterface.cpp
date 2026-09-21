@@ -28,6 +28,7 @@
 #include <GCodes/GCodeBuffer/GCodeBuffer.h>
 #include <ClosedLoop/ClosedLoop.h>
 #include <AppNotifyIndices.h>
+#include <cmath>
 
 #if HAS_SBC_INTERFACE
 # include "SBC/SbcInterface.h"
@@ -410,7 +411,7 @@ void CanInterface::SendAnnounce(CanMessageBuffer *buf) noexcept
 		msg->timeSinceStarted = millis();
 		msg->numDrivers = NumDirectDrivers;
 		msg->usesUf2Binary = BOARD_USES_UF2_BINARY;
-		msg->zero = 0;
+		msg->ClearReservedFields();
 		memcpy(msg->uniqueId, reprap.GetPlatform().GetUniqueId().GetRaw(), sizeof(msg->uniqueId));
 		// Note, board type name, firmware version, firmware date and firmware time are limited to 43 characters in the new
 		// We use vertical-bar to separate the three fields: board type, firmware version, date/time
@@ -1058,7 +1059,7 @@ GCodeResult CanInterface::ConfigureRemoteDriver(DriverId driver, GCodeBuffer& gb
 		}
 
 	case 1:
-		if (gb.SeenAny("CDEHIRSTV"))
+		if (gb.SeenAny("CDEFHIRSTV"))
 		{
 			if (!reprap.GetGCodes().LockAllMovementSystemsAndWaitForStandstill(gb))
 			{
@@ -1066,8 +1067,52 @@ GCodeResult CanInterface::ConfigureRemoteDriver(DriverId driver, GCodeBuffer& gb
 			}
 		}
 		{
-			CanMessageGenericConstructor cons(M569Point1Params);
+			// I and D accept one or two public values, while their original CAN
+			// fields remain scalar. The second values use appended transport fields.
+			ParamDescriptor params[ARRAY_SIZE(M569Point1Params)];
+			memcpy(params, M569Point1Params, sizeof(params));
+			params[M569Point1IParamIndex].letter = 'i';
+			params[M569Point1DParamIndex].letter = 'd';
+			params[M569Point1FParamIndex].letter = 'f';
+
+			float iValues[2], dValues[2], fValue = 0.0f;
+			size_t numIValues = 0, numDValues = 0;
+			const bool seenI = gb.Seen('I');
+			if (seenI)
+			{
+				numIValues = ARRAY_SIZE(iValues);
+				gb.GetFloatArray(iValues, numIValues, false);
+			}
+			const bool seenD = gb.Seen('D');
+			if (seenD)
+			{
+				numDValues = ARRAY_SIZE(dValues);
+				gb.GetFloatArray(dValues, numDValues, false);
+			}
+			const bool seenF = gb.Seen('F');
+			if (seenF) { fValue = gb.GetFValue(); }
+
+			if ((numIValues == 2 && (!std::isfinite(iValues[0]) || !std::isfinite(iValues[1]) || iValues[0] < 0.0f || iValues[1] < 0.0f))
+				|| (numDValues == 2 && (!std::isfinite(dValues[0]) || !std::isfinite(dValues[1]) || dValues[0] < 0.0f || dValues[1] < 0.0f))
+				|| (seenF && (!std::isfinite(fValue) || fValue < 0.0f || fValue > 256.0f)))
+			{
+				reply.copy("Invalid closed loop controller gain");
+				return GCodeResult::error;
+			}
+
+			CanMessageGenericConstructor cons(params);
 			cons.PopulateFromCommand(gb);
+			if (seenI)
+			{
+				cons.AddFParam('i', iValues[0]);
+				if (numIValues == 2) { cons.AddFParam('s', iValues[1]); }
+			}
+			if (seenD)
+			{
+				cons.AddFParam('d', dValues[0]);
+				if (numDValues == 2) { cons.AddFParam('t', dValues[1]); }
+			}
+			if (seenF) { cons.AddFParam('f', fValue); }
 			return cons.SendAndGetResponse(CanMessageType::m569p1, driver.boardAddress, reply);
 		}
 
