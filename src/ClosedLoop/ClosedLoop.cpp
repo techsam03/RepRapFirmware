@@ -65,11 +65,12 @@ static bool OpenDataCollectionFile(const char *_ecv_array filename, unsigned int
 			",Phase Shift",
 			",Coil A Current",
 			",Coil B Current",
-			",Unknown",
+			",PID F Term",
 		};
 		String<StringLength500> temp;
 		temp.copy("Sample,Timestamp");
 		uint16_t filter = (filterRequested & (CL_RECORD_CURRENT_STEP_PHASE - 1))
+						| (filterRequested & CL_RECORD_PID_F_TERM)
 						| ((filterRequested & (CL_RECORD_CURRENT_STEP_PHASE | CL_RECORD_DESIRED_STEP_PHASE | CL_RECORD_PHASE_SHIFT | CL_RECORD_COIL_A_CURRENT | CL_RECORD_COIL_B_CURRENT)) << 2)
 						| ((filterRequested & (CL_RECORD_PID_V_TERM | CL_RECORD_PID_A_TERM)) >> 5);
 		for (unsigned int i = 0; filter != 0; ++i)
@@ -250,6 +251,7 @@ void ClosedLoop::ProcessReceivedData(CanAddress src, const CanMessageClosedLoopD
 				if (filterRequested & CL_RECORD_PHASE_SHIFT)  			{ currentLine.catf(",%u",	FetchLEU16(dataPtr)); }
 				if (filterRequested & CL_RECORD_COIL_A_CURRENT) 		{ currentLine.catf(",%d",	FetchLEI16(dataPtr)); }
 				if (filterRequested & CL_RECORD_COIL_B_CURRENT) 		{ currentLine.catf(",%d",	FetchLEI16(dataPtr)); }
+				if (filterRequested & CL_RECORD_PID_F_TERM) 			{ currentLine.catf(",%.1f", (double)FetchLEF16(dataPtr)); }
 				currentLine.cat("\n");
 
 				// Write the data
